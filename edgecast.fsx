@@ -1,19 +1,63 @@
 ﻿#r "nuget: BouncyCastle.NetCore, 1.8.8"
+#r "nuget: CommandLineParser.FSharp, 2.8.0"
 #load "edgecastlib/EdgecastCrypto.fs"
 
 open System
 open EdgecastCrypto
+open CommandLine
+
+// --direction Encrypt --key yyy --ipaddress 128.0.0.1 --urls http://fee http://fee2
+type MyCommandLineOptions = {
+    [<Option(HelpText = "The key.", Required = true)>] Key : string;
+    [<Option(HelpText = "'Encrypt' or 'Decrypt'.", Required = true)>] Direction : Direction;
+    [<Option(HelpText = "Client IP address.")>] IPAddress : string option;
+    [<Option(HelpText = "Token to decrypt.")>] Token : string;
+    [<Option("urls", HelpText = "Allowed URLs.")>] AllowedUrls : seq<string>;
+}
+and Direction =
+    | Encrypt = 1
+    | Decrypt = 2
 
 let inspect msg a =
     printfn "%s: %A" msg a
     a
 
-let key = "primary202109099dc4cf480b17a94f5eef938bdb08c18535bcc777cc0420c29133d0134d635aa78a1e28f6b883619ed5f920bd3cd79bfe10c42b5d96b7eeb84571ceee4cb51d89"
+let maybe func optionalArg =
+    match optionalArg with
+    | Some(arg) -> func arg
+    | None -> id
 
-createTokenValidFor (TimeSpan.FromDays(365.0))
-|> inspect "token"
-|> encrypt key
-|> inspect "encrypted"
-|> decrypt key
-|> inspect "decrypted again"
-|> ignore
+let forall (func : 'a -> 't -> 't) (l : 'a seq) (t: 't) : 't =
+    match (Seq.isEmpty l) with
+    | true -> t
+    | false -> Seq.fold (fun t a -> func a t) t l
+
+let argv = fsi.CommandLineArgs |> Array.tail
+let args = match Parser.Default.ParseArguments<MyCommandLineOptions>( argv ) with
+            | :? Parsed<MyCommandLineOptions> as parsed -> parsed.Value
+            | :? NotParsed<MyCommandLineOptions> as notParsed -> failwith "Could not parse"
+            |  _ -> failwith "Could not parse"
+
+match args.Direction with
+| Direction.Encrypt -> 
+    createTokenValidFor (TimeSpan.FromDays(365.0))
+    |> maybe withClientIPAddress args.IPAddress
+    |> forall addAllowedUrl args.AllowedUrls
+    |> encrypt args.Key
+    |> printfn "%s"
+    |> ignore
+| Direction.Decrypt ->
+    args.Token
+    |> inspect "the token"
+    |> decrypt args.Key
+    |> printfn "%A"
+| _ -> failwith "Unknown operation"
+
+// createTokenValidFor (TimeSpan.FromDays(365.0))
+// |> withClientIPAddress address
+// |> inspect "token"
+// |> encrypt key
+// |> inspect "encrypted"
+// |> decrypt key
+// |> inspect "decrypted again"
+// |> ignore
